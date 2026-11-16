@@ -14,27 +14,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License. */
 
-'use strict';
-
-// Polyfill Promise.prototype.finally().
-require('promise.prototype.finally').shim();
-
-const chalk = require('chalk');
-const cli = require('cli');
-const commandLineArgs = require('command-line-args');
-const commandLineCommands = require('command-line-commands');
-const commandLineUsage = require('command-line-usage');
-const fs = require('fs-extra');
-const klaw = require('klaw');
-const os = require('os');
-const normalizePackageData = require('normalize-package-data');
-const packageJson = require('../package.json');
-const path = require('path');
-const pify = require('pify');
-const readPkgUp = require('read-pkg-up');
-const semver = require('semver');
-const spawn = require('child_process').spawn;
-const { getPlatformDirectories } = require('./directory-utils');
+import AdmZip from 'adm-zip';
+import { createSpinner } from 'nanospinner';
+import commandLineArgs from 'command-line-args';
+import commandLineCommands from 'command-line-commands';
+import commandLineUsage from 'command-line-usage';
+import fs from 'fs-extra';
+import { getPlatformDirectories } from './directory-utils.js';
+import { isRuntimeInstalled, installRuntime } from './install-runtime.js';
+import klaw from 'klaw';
+import os from 'os';
+import normalizePackageData from 'normalize-package-data';
+import packageJson from '../package.json' with { type: 'json' };
+import path from 'path';
+import pify from 'pify';
+import plist from 'simple-plist';
+import { readPackageUp } from 'read-package-up';
+import semver from 'semver';
+import { spawn } from 'child_process';
 
 const validCommands = [ null, 'package', 'run', 'version', 'help', 'update' ];
 let parsedCommands = {};
@@ -88,14 +85,18 @@ function runApp() {
   ];
   const options = commandLineArgs(optionDefinitions, { argv: argv, partial: true });
 
-  const { installDir, executableDir } = getPlatformDirectories(process.platform);
-  let executable = path.join(executableDir, `firefox${process.platform === 'win32' ? '.exe' : ''}`);
+  const legacy = process.platform === 'darwin' && semver.lt(os.release(), '14.0.0');
+
+  const { installDir, executableDir } = getPlatformDirectories(process.platform, legacy);
   const resourcesDir = process.platform === 'darwin' ? path.join(installDir, 'Contents', 'Resources') : installDir;
   const applicationIni = path.join(resourcesDir, 'qbrt', 'application.ini');
   const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), `${packageJson.name}-profile-`));
 
-  const shellDir = path.join(__dirname, '..', 'shell');
+  const shellDir = path.join(import.meta.dirname, '..', 'shell');
   const appDir = fs.existsSync(options.path) ? path.resolve(options.path) : shellDir;
+
+  const execFormat = process.platform === 'win32' ? '.exe' : '';
+  let executable = path.join(executableDir, legacy ? 'arcticfox' : `basilisk${execFormat}`);
 
   readProjectMetadata(appDir, function transformer(appPackageResult) {
     // First try `main` (Electron), then try `bin` (pkg), and finally fall back to `index.js`.
@@ -154,10 +155,10 @@ function runApp() {
           executableArgs.unshift(executable, '--');
           executable = 'lldb';
           break;
-        case 'linux':
+        /*case 'linux':
           executableArgs.unshift('--args', executable);
           executable = 'gdb';
-          break;
+          break;*/
       }
       spawnOptions.stdio = 'inherit';
     }
@@ -186,25 +187,28 @@ function runApp() {
 
 function packageApp() {
   const optionDefinitions = [
-    { name: 'path', alias: 'p', type: String, defaultOption: true, defaultValue: argv[0] || process.cwd() },
     { name: 'win', type: Boolean },
-    { name: 'linux', type: Boolean },
+    { name: 'legacy', type: Boolean },
+    // { name: 'linux', type: Boolean },
   ];
   const options = commandLineArgs(optionDefinitions, { argv: argv });
-  const shellDir = path.join(__dirname, '..', 'shell');
-  const appSourceDir = fs.existsSync(options.path) ? path.resolve(options.path) : shellDir;
+  const shellDir = path.join(import.meta.dirname, '..', 'shell');
+  const appSourceDir = shellDir;
 
   let platform = process.platform;
-  if (options.win && options.linux) {
+  /*if (options.win && options.linux) {
     throw new Error('Cannot package windows and linux packages simultaneously.');
-  }
+  }*/
   if (options.win) {
     platform = 'win32';
   }
-  if (options.linux) {
+  /*if (options.linux) {
     platform = 'linux';
+  }*/
+  if (options.legacy && (options.win || platform !== 'darwin')) {
+    throw new Error('Creating a legacy package for non-macOS is not implemented.');
   }
-  const { installDir } = getPlatformDirectories(platform);
+  const { installDir } = getPlatformDirectories(platform, options.legacy);
 
   let appName;
   let appPackageJson;
@@ -214,23 +218,24 @@ function packageApp() {
   let tempDir;
   let stageDir;
 
-  const { isRuntimeInstalled, installRuntime } = require('./install-runtime');
-
   let runtimeCheck;
-  if (isRuntimeInstalled(platform)) {
+  if (isRuntimeInstalled(platform, options.legacy)) {
     runtimeCheck = Promise.resolve();
   }
   else {
-    runtimeCheck = installRuntime(platform);
+    runtimeCheck = installRuntime(platform, options.legacy);
   }
+
+  let packagingSpinner = null;
 
   runtimeCheck.then(() => 
     readProjectMetadata(appSourceDir, function transformer(appPackageResult) {
+      if (!appPackageResult.pkg) appPackageResult.pkg = {}; 
       // `productName` is a key commonly used in `package.json` files of Electron apps.
       appPackageResult.pkg.name = appPackageResult.pkg.productName || appPackageResult.pkg.name ||
         path.basename(appSourceDir);
       return appPackageResult;
-    })
+    }),
   )
   .then(appPackageResult => {
     return appPackageResult;
@@ -243,8 +248,8 @@ function packageApp() {
     appName = appPackageJson.name;
     appVersion = appPackageJson.version;
     packageFile = `${appName}.` + (appVersion ? `v${appVersion}.` : '') +
-      { win32: 'zip', darwin: 'dmg', linux: 'tgz' }[platform];
-    cli.spinner(`  Packaging ${options.path} -> ${packageFile} …`);
+      { win32: 'zip', darwin: 'dmg'/*, linux: 'tgz'*/ }[platform];
+    packagingSpinner = createSpinner(`Packaging ${options.path} -> ${packageFile}`).start();
     return appPackageJson;
   })
   .then(appPackageJson => {
@@ -272,7 +277,6 @@ function packageApp() {
   .then(() => {
     // Update the Info.plist file with the new name of the launcher script.
     if (platform === 'darwin') {
-      const plist = require('simple-plist');
       const plistFile = path.join(stageDir, 'Contents', 'Info.plist');
       return pify(plist.readFile)(plistFile)
       .then(appPlist => {
@@ -283,18 +287,11 @@ function packageApp() {
   })
   .then(() => {
     // Copy the app to the stage directory.
-    return pify(fs.copy)(appSourceDir, appTargetDir)
-    .then(() => {
-      if (appSourceDir === shellDir) {
-        const appTargetPackageJSONFile = path.join(appTargetDir, 'package.json');
-        appPackageJson.mainURL = options.path;
-        return pify(fs.writeFile)(appTargetPackageJSONFile, JSON.stringify(appPackageJson));
-      }
-    });
+    return pify(fs.copy)(appSourceDir, appTargetDir);
   })
   .then(() => {
     if (platform === 'darwin') {
-      const hdiutilArgs = ['create', '-srcfolder', stageDir];
+      const hdiutilArgs = ['create', '-fs', 'HFS+', '-srcfolder', stageDir];
       return new Promise((resolve, reject) => {
         // macOS 10.9 (Mavericks) has a bug in hdiutil that causes image
         // creation to fail with obscure error -5341.  The problem doesn't seem
@@ -327,36 +324,30 @@ function packageApp() {
         });
       });
     }
-    else if (platform === 'linux') {
-      const archiver = require('archiver');
+    /*else if (platform === 'linux') {
       return new Promise((resolve, reject) => {
         const tarFile = fs.createWriteStream(packageFile);
-        const archive = archiver('tar', { gzip: true });
+        const archive = new Archiver('tar', { gzip: true }); // TODO: replace
         tarFile.on('close', resolve);
         archive.on('error', reject);
         archive.pipe(tarFile);
         archive.directory(stageDir, path.basename(stageDir));
         archive.finalize();
       });
-    }
+    }*/
     else if (platform === 'win32') {
-      const archiver = require('archiver');
-      return new Promise((resolve, reject) => {
-        const zipFile = fs.createWriteStream(packageFile);
-        const archive = archiver('zip');
-        zipFile.on('close', resolve);
-        archive.on('error', reject);
-        archive.pipe(zipFile);
-        archive.directory(stageDir, path.basename(stageDir));
-        archive.finalize();
+      let zipFile = new AdmZip();
+      return zipFile.addLocalFolderPromise(stageDir, { zipPath: path.basename(stageDir) })
+      .then(() => {
+        return zipFile.writeZipPromise(packageFile, { overwrite: true });
       });
     }
   })
   .then(() => {
-    cli.spinner(chalk.green.bold('✓ ') + `Packaging ${options.path} -> ${packageFile} … done!`, true);
+    packagingSpinner.success();
   })
   .catch((error) => {
-    cli.spinner(chalk.red.bold('✗ ') + `Packaging ${options.path} -> ${packageFile} … failed!`, true);
+    if (packagingSpinner) packagingSpinner.error();
     console.error(error);
   })
   .finally(() => {
@@ -371,13 +362,13 @@ function displayVersion() {
 function displayHelp() {
   const sections = [
     {
-      header: 'qbrt',
-      content: 'qbrt is a command-line interface to a Gecko desktop app runtime. ' +
+      header: 'qbrt-flash',
+      content: 'qbrt-flash is a command-line interface to a Gecko desktop app runtime. ' +
                'It\'s designed to simplify the process of building and testing desktop apps using Gecko.',
     },
     {
       header: 'Synopsis',
-      content: '$ qbrt <command> <path or URL>',
+      content: '$ qbrt-flash <command> <path or URL>',
     },
     {
       header: 'Command List',
@@ -392,15 +383,15 @@ function displayHelp() {
       content: [
         {
           desc: '1. Run an app at a URL.',
-          example: '$ qbrt run https://eggtimer.org/',
+          example: '$ qbrt-flash run https://eggtimer.org/',
         },
         {
           desc: '2. Run an app at a path.',
-          example: '$ qbrt run path/to/my/app/',
+          example: '$ qbrt-flash run path/to/my/app/',
         },
         {
           desc: '3. Package an app for distribution.',
-          example: '$ qbrt package path/to/my/app/',
+          example: '$ qbrt-flash package path/to/my/app/',
         },
       ],
     },
@@ -414,16 +405,15 @@ function displayHelp() {
 }
 
 function updateRuntime() {
-  const { installRuntime } = require('./install-runtime');
   let exitCode = 0;
-  cli.spinner('  Updating runtime …');
+  const runtimeSpinner = createSpinner('Updating runtime').start();
   installRuntime()
   .then(() => {
-    cli.spinner(chalk.green.bold('✓ ') + 'Updating runtime … done!', true);
+    runtimeSpinner.success();
   })
   .catch(error => {
     exitCode = 1;
-    cli.spinner(chalk.red.bold('✗ ') + 'Updating runtime … failed!', true);
+    runtimeSpinner.error();
     console.error(error);
   })
   .finally(() => {
@@ -448,18 +438,18 @@ function readProjectMetadata(projectDir, transformer) {
     return metadata;
   }
 
-  return readPkgUp({cwd: projectDir}).then(result => {
+  return readPackageUp({cwd: projectDir}).then(result => {
     // If the app doesn't have a package.json file, then result.pkg will be
     // undefined, but we assume it's defined in other parts of the codebase,
     // so ensure that it's defined, even if it's just an empty object.
-    result.pkg = result.pkg || {};
+    result.packageJson = result.packageJson || {};
 
     // If the app doesn't have a package.json file, then result.path will be
     // undefined, but we assume it's defined in other parts of the codebase,
     // so ensure that it's defined, even if the file doesn't actually exist.
     result.path = result.path || path.join(projectDir, 'package.json');
 
-    let metadata = result.pkg;
+    let metadata = result.packageJson;
 
     result = transform(result);
 
@@ -467,14 +457,9 @@ function readProjectMetadata(projectDir, transformer) {
     // (e.g., invalid values for `name` or `version`) in the
     // `package.json` file.
     // To expose warnings, pass a callback as a second argument.
-    try {
-      normalizePackageData(metadata);
-    }
-    catch (error) {
-      throw error;
-    }
+    normalizePackageData(metadata);
 
-    result.pkg = removeUnused(metadata);
+    result.packageJson = removeUnused(metadata);
 
     return result;
   })

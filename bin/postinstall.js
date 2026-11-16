@@ -14,28 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License. */
 
-'use strict';
-
-// Polyfill Promise.prototype.finally().
-require('promise.prototype.finally').shim();
-
-const chalk = require('chalk');
-const cli = require('cli');
-const { installRuntime } = require('./install-runtime');
+import { createSpinner } from 'nanospinner';
+import { installRuntime } from './install-runtime.js';
 
 let exitCode = 0;
 
+const spinner = createSpinner('Installing runtime').start();
 Promise.resolve()
-.then(() => {
-  cli.spinner('  Installing runtime …');
-})
 .then(installRuntime)
 .then(() => {
-  cli.spinner(chalk.green.bold('✓ ') + 'Installing runtime … done!', true);
+  spinner.success();
 })
 .catch(error => {
   exitCode = 1;
-  cli.spinner(chalk.red.bold('✗ ') + 'Installing runtime … failed!', true);
+  spinner.error();
   console.error(error);
 })
 .finally(() => {

@@ -68,5 +68,8 @@ typings/
 *.tgz
 *.zip
 
+# Except the build support files
+!build_support/*
+
 # vim swap files
 *.sw*

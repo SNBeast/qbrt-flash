@@ -14,26 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License. */
 
-'use strict';
+import { createSpinner } from 'nanospinner';
+import fs from 'fs-extra';
+import { getPlatformDirectories } from './directory-utils.js';
+import os from 'os';
+import path from 'path';
+import pify from 'pify';
+import semver from 'semver';
 
-// Polyfill Promise.prototype.finally().
-require('promise.prototype.finally').shim();
-
-const chalk = require('chalk');
-const cli = require('cli');
-const fs = require('fs-extra');
-const path = require('path');
-const pify = require('pify');
-const { getPlatformDirectories } = require('./directory-utils');
-
-function installXULApp(platform=process.platform) {
+export function installXULApp(
+  platform=process.platform,
+  legacy=process.platform === 'darwin' && semver.lt(os.release(), '14.0.0'),
+) {
   // Copy the qbrt xulapp to the target directory.
 
   // TODO: move qbrt xulapp files into a separate source directory
   // that we can copy in one fell swoop.
 
-  const sourceDir = path.join(__dirname, '..');
-  const { resourcesDir } = getPlatformDirectories(platform);
+  const sourceDir = path.join(import.meta.dirname, '..');
+  const { resourcesDir } = getPlatformDirectories(platform, legacy);
   const targetDir = path.join(resourcesDir, 'qbrt');
 
   const files = [
@@ -52,18 +51,16 @@ function installXULApp(platform=process.platform) {
   });
 }
 
-module.exports = installXULApp;
-
-if (require.main === module) {
+if (import.meta.main) {
   let exitCode = 0;
-  cli.spinner('  Installing XUL app …');
+  const xulSpinner = createSpinner('Installing XUL app');
   installXULApp()
   .then(() => {
-    cli.spinner(chalk.green.bold('✓ ') + 'Installing XUL app … done!', true);
+    xulSpinner.success();
   })
   .catch(error => {
     exitCode = 1;
-    cli.spinner(chalk.red.bold('✗ ') + 'Installing XUL app … failed!', true);
+    xulSpinner.error();
     console.error(error);
   })
   .finally(() => {

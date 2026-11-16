@@ -1,9 +1,14 @@
-const path = require('path');
-function getPlatformDirectories(platform=process.platform) {
-  const distDir = path.join(__dirname, '..', 'dist', platform);
+import os from 'os';
+import path from 'path';
+import semver from 'semver';
+export function getPlatformDirectories(
+  platform=process.platform,
+  legacy=process.platform === 'darwin' && semver.lt(os.release(), '14.0.0'),
+) {
+  const buildDir = path.join(import.meta.dirname, '..', 'build_support');
+  const distDir = path.join(import.meta.dirname, '..', 'dist', platform + (legacy ? 'Legacy' : ''));
   const installDir = path.join(distDir, platform === 'darwin' ? 'Runtime.app' : 'runtime');
   const resourcesDir = platform === 'darwin' ? path.join(installDir, 'Contents', 'Resources') : installDir;
   const executableDir = platform === 'darwin' ? path.join(installDir, 'Contents', 'MacOS') : installDir;
-  return { distDir, installDir, resourcesDir, executableDir };
+  return { buildDir, distDir, installDir, resourcesDir, executableDir };
 }
-module.exports = { getPlatformDirectories };

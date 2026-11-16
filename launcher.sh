@@ -46,12 +46,8 @@ rreadlink() ( # Execute the function in a *subshell* to localize variables and t
   fi
 )
 
-MOZ_APP_NAME=firefox
+MOZ_APP_NAME=basilisk
 MOZ_LIBDIR=$(dirname -- "$(rreadlink "$0")")
 MOZ_RESOURCES_DIR=''
-
-if [ "$(uname)" = 'Darwin' ]; then
-   MOZ_RESOURCES_DIR='../Resources/'
-fi
 
 exec -a "${MOZ_LIBDIR}/${MOZ_APP_NAME}" "${MOZ_LIBDIR}/${MOZ_APP_NAME}" --app "${MOZ_LIBDIR}/${MOZ_RESOURCES_DIR}qbrt/application.ini" "$@"
