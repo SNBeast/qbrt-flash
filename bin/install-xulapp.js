@@ -14,18 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License. */
 
-import { createSpinner } from 'nanospinner';
 import fs from 'fs-extra';
 import { getPlatformDirectories } from './directory-utils.js';
-import os from 'os';
 import path from 'path';
 import pify from 'pify';
-import semver from 'semver';
 
-export function installXULApp(
-  platform=process.platform,
-  legacy=process.platform === 'darwin' && semver.lt(os.release(), '14.0.0'),
-) {
+export function installXULApp(platform, legacy) {
   // Copy the qbrt xulapp to the target directory.
 
   // TODO: move qbrt xulapp files into a separate source directory
@@ -48,22 +42,5 @@ export function installXULApp(
   return pify(fs.ensureDir)(targetDir)
   .then(() => {
     return Promise.all(files.map(file => pify(fs.copy)(path.join(sourceDir, file), path.join(targetDir, file))));
-  });
-}
-
-if (import.meta.main) {
-  let exitCode = 0;
-  const xulSpinner = createSpinner('Installing XUL app');
-  installXULApp()
-  .then(() => {
-    xulSpinner.success();
-  })
-  .catch(error => {
-    exitCode = 1;
-    xulSpinner.error();
-    console.error(error);
-  })
-  .finally(() => {
-    process.exit(exitCode);
   });
 }

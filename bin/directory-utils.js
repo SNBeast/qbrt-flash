@@ -1,10 +1,5 @@
-import os from 'os';
 import path from 'path';
-import semver from 'semver';
-export function getPlatformDirectories(
-  platform=process.platform,
-  legacy=process.platform === 'darwin' && semver.lt(os.release(), '14.0.0'),
-) {
+export function getPlatformDirectories(platform, legacy) {
   const buildDir = path.join(import.meta.dirname, '..', 'build_support');
   const distDir = path.join(import.meta.dirname, '..', 'dist', platform + (legacy ? 'Legacy' : ''));
   const installDir = path.join(distDir, platform === 'darwin' ? 'Runtime.app' : 'runtime');

@@ -56,14 +56,8 @@ switch (command) {
   case 'package':
     packageApp();
     break;
-  case 'run':
-    runApp();
-    break;
   case 'help':
     displayHelp();
-    break;
-  case 'update':
-    updateRuntime();
     break;
   default:
     if (argv.includes('-v') ||
@@ -76,124 +70,16 @@ switch (command) {
     break;
 }
 
-function runApp() {
-  const optionDefinitions = [
-    { name: 'debug', type: Boolean },
-    { name: 'jsdebugger', type: Boolean },
-    { name: 'path', type: String, defaultOption: true, defaultValue: process.cwd() },
-    { name: 'wait-for-jsdebugger', type: Boolean },
-  ];
-  const options = commandLineArgs(optionDefinitions, { argv: argv, partial: true });
-
-  const legacy = process.platform === 'darwin' && semver.lt(os.release(), '14.0.0');
-
-  const { installDir, executableDir } = getPlatformDirectories(process.platform, legacy);
-  const resourcesDir = process.platform === 'darwin' ? path.join(installDir, 'Contents', 'Resources') : installDir;
-  const applicationIni = path.join(resourcesDir, 'qbrt', 'application.ini');
-  const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), `${packageJson.name}-profile-`));
-
-  const shellDir = path.join(import.meta.dirname, '..', 'shell');
-  const appDir = fs.existsSync(options.path) ? path.resolve(options.path) : shellDir;
-
-  const execFormat = process.platform === 'win32' ? '.exe' : '';
-  let executable = path.join(executableDir, legacy ? 'arcticfox' : `basilisk${execFormat}`);
-
-  readProjectMetadata(appDir, function transformer(appPackageResult) {
-    // First try `main` (Electron), then try `bin` (pkg), and finally fall back to `index.js`.
-    appPackageResult.pkg.main = appPackageResult.pkg.main || appPackageResult.pkg.bin || 'index.js';
-    return appPackageResult;
-  })
-  .then(appPackageResult => {
-    return appPackageResult;
-  }, error => {
-    console.error(error);
-    process.exit(1);
-  })
-  .then(appPackageResult => {
-    const mainEntryPoint = path.join(appPackageResult.path, '..', appPackageResult.pkg.main);
-
-    // Args like 'app', 'new-instance', and 'profile' are handled by nsAppRunner,
-    // which supports uni-dash (-foo), duo-dash (--foo), and slash (/foo) variants
-    // (the latter only on Windows).
-    //
-    // But args like 'aqq' and 'jsdebugger' are handled by nsCommandLine methods,
-    // which don't support duo-dash arguments on Windows. So, for maximal
-    // compatibility (and minimal complexity, modulo this over-long explanation),
-    // we always pass uni-dash args to the runtime.
-    //
-    // Per nsBrowserApp, the 'app' flag always needs to be the first in the list.
-
-    let executableArgs = [
-      '-app', applicationIni,
-      '-profile', profileDir,
-      // TODO: figure out why we need 'new-instance' for it to work.
-      '-new-instance',
-      '-aqq', mainEntryPoint,
-      ...(options._unknown || []),
-    ];
-
-    if (appDir === shellDir) {
-      executableArgs.push(options.path);
-    }
-
-    if (options.jsdebugger) {
-      executableArgs.push('-jsdebugger');
-    }
-    if (options['wait-for-jsdebugger']) {
-      executableArgs.push('-wait-for-jsdebugger');
-    }
-
-    const spawnOptions = {};
-
-    if (options.debug) {
-      switch (process.platform) {
-        case 'win32':
-          console.error('The --debug option is not yet supported on Windows.');
-          process.exit(1);
-          break;
-        case 'darwin':
-          executableArgs.unshift(executable, '--');
-          executable = 'lldb';
-          break;
-        /*case 'linux':
-          executableArgs.unshift('--args', executable);
-          executable = 'gdb';
-          break;*/
-      }
-      spawnOptions.stdio = 'inherit';
-    }
-
-    const child = spawn(executable, executableArgs, spawnOptions);
-    // In theory, we should be able to specify the stdio: 'inherit' option
-    // when spawning the child to forward its output to our stdout/err streams.
-    // But that doesn't work on Windows in a MozillaBuild console.
-    if (!options.debug) {
-      child.stdout.on('data', data => process.stdout.write(data));
-      child.stderr.on('data', data => process.stderr.write(data));
-    }
-
-    child.on('close', code => {
-      fs.removeSync(profileDir);
-      process.exit(code);
-    });
-
-    process.on('SIGINT', () => {
-      // If we get a SIGINT, then kill our child process.  Tests send us
-      // this signal, as might the user from a terminal window invocation.
-      child.kill('SIGINT');
-    });
-  });
-}
-
 function packageApp() {
   const optionDefinitions = [
+    { name: 'path', alias: 'p', type: String, defaultOption: true, defaultValue: argv[0] || process.cwd() },
     { name: 'win', type: Boolean },
     { name: 'legacy', type: Boolean },
     // { name: 'linux', type: Boolean },
   ];
   const options = commandLineArgs(optionDefinitions, { argv: argv });
   const shellDir = path.join(import.meta.dirname, '..', 'shell');
-  const appSourceDir = shellDir;
+  const appSourceDir = fs.existsSync(options.path) ? path.resolve(options.path) : shellDir;;
 
   let platform = process.platform;
   /*if (options.win && options.linux) {
@@ -207,6 +93,9 @@ function packageApp() {
   }*/
   if (options.legacy && (options.win || platform !== 'darwin')) {
     throw new Error('Creating a legacy package for non-macOS is not implemented.');
+  }
+  if (options.legacy) {
+    throw new Error('Legacy macOS packages are currently dysfunctional due to bugs in all up-to-date browser options.');
   }
   const { installDir } = getPlatformDirectories(platform, options.legacy);
 
@@ -230,10 +119,9 @@ function packageApp() {
 
   runtimeCheck.then(() => 
     readProjectMetadata(appSourceDir, function transformer(appPackageResult) {
-      if (!appPackageResult.pkg) appPackageResult.pkg = {}; 
       // `productName` is a key commonly used in `package.json` files of Electron apps.
-      appPackageResult.pkg.name = appPackageResult.pkg.productName || appPackageResult.pkg.name ||
-        path.basename(appSourceDir);
+      appPackageResult.packageJson.name = appPackageResult.packageJson.productName ||
+        appPackageResult.packageJson.name || path.basename(appSourceDir);
       return appPackageResult;
     }),
   )
@@ -244,10 +132,10 @@ function packageApp() {
     process.exit(1);
   })
   .then(appPackageResult => {
-    appPackageJson = appPackageResult.pkg;
+    appPackageJson = appPackageResult.packageJson;
     appName = appPackageJson.name;
     appVersion = appPackageJson.version;
-    packageFile = `${appName}.` + (appVersion ? `v${appVersion}.` : '') +
+    packageFile = `${appName}.` + (appVersion ? `v${appVersion}.` : '') + (options.legacy ? 'legacy.' : '') +
       { win32: 'zip', darwin: 'dmg'/*, linux: 'tgz'*/ }[platform];
     packagingSpinner = createSpinner(`Packaging ${options.path} -> ${packageFile}`).start();
     return appPackageJson;
@@ -287,7 +175,14 @@ function packageApp() {
   })
   .then(() => {
     // Copy the app to the stage directory.
-    return pify(fs.copy)(appSourceDir, appTargetDir);
+    return pify(fs.copy)(appSourceDir, appTargetDir)
+    .then(() => {
+      if (appSourceDir === shellDir) {
+        const appTargetPackageJSONFile = path.join(appTargetDir, 'package.json');
+        appPackageJson.mainURL = options.path;
+        return pify(fs.writeFile)(appTargetPackageJSONFile, JSON.stringify(appPackageJson));
+      }
+    });
   })
   .then(() => {
     if (platform === 'darwin') {
@@ -373,24 +268,14 @@ function displayHelp() {
     {
       header: 'Command List',
       content: [
-        { name: 'run', summary: 'Run an app.' },
         { name: 'package', summary: 'Package an app for distribution.' },
-        { name: 'update', summary: 'Update the runtime to its latest version.' },
       ],
     },
     {
       header: 'Examples',
       content: [
         {
-          desc: '1. Run an app at a URL.',
-          example: '$ qbrt-flash run https://eggtimer.org/',
-        },
-        {
-          desc: '2. Run an app at a path.',
-          example: '$ qbrt-flash run path/to/my/app/',
-        },
-        {
-          desc: '3. Package an app for distribution.',
+          desc: '1. Package an app for distribution.',
           example: '$ qbrt-flash package path/to/my/app/',
         },
       ],
@@ -402,23 +287,6 @@ function displayHelp() {
 
   const usage = commandLineUsage(sections);
   console.log(usage);
-}
-
-function updateRuntime() {
-  let exitCode = 0;
-  const runtimeSpinner = createSpinner('Updating runtime').start();
-  installRuntime()
-  .then(() => {
-    runtimeSpinner.success();
-  })
-  .catch(error => {
-    exitCode = 1;
-    runtimeSpinner.error();
-    console.error(error);
-  })
-  .finally(() => {
-    process.exit(exitCode);
-  });
 }
 
 function readProjectMetadata(projectDir, transformer) {
@@ -439,9 +307,9 @@ function readProjectMetadata(projectDir, transformer) {
   }
 
   return readPackageUp({cwd: projectDir}).then(result => {
-    // If the app doesn't have a package.json file, then result.pkg will be
-    // undefined, but we assume it's defined in other parts of the codebase,
-    // so ensure that it's defined, even if it's just an empty object.
+    // If the app doesn't have a package.json file, then result.packageJson
+    // will be undefined, but we assume it's defined in other parts of the
+    // codebase, so ensure that it's defined, even if it's just an empty object.
     result.packageJson = result.packageJson || {};
 
     // If the app doesn't have a package.json file, then result.path will be

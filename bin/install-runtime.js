@@ -16,7 +16,6 @@
 
 import _7z from '7zip-min';
 import AdmZip from 'adm-zip';
-import { createSpinner } from 'nanospinner';
 import fs from 'fs-extra';
 import { getPlatformDirectories } from './directory-utils.js';
 import https from 'https';
@@ -27,7 +26,6 @@ import path from 'path';
 import pify from 'pify';
 import plist from 'simple-plist';
 import { readFile, writeFile } from 'fs/promises';
-import semver from 'semver';
 import { spawn } from 'child_process';
 
 // TODO: automate getting the latest versions
@@ -43,10 +41,7 @@ const fileExtensions = {
   libCpp: 'zip',
 };
 
-export function installRuntime(
-  platform=process.platform,
-  legacy=process.platform === 'darwin' && semver.lt(os.release(), '14.0.0'),
-) {
+export function installRuntime(platform, legacy) {
   let tempDir, mountPoint, filePath, fileStream;
 
   const { buildDir, distDir, installDir, resourcesDir, executableDir } = getPlatformDirectories(platform, legacy);
@@ -96,6 +91,7 @@ export function installRuntime(
   .then(() => {
     if (platform === 'win32') {
       // TODO: something not this ugly
+      // sourced from https://rtfreesoft.blogspot.com/search/label/browser
       const source = path.join(buildDir, 'basilisk52-g4.8.win32-git-20261114-3219d2d-uxp-f0c6d61861-xpmod-ia32.7z');
       const destination = distDir;
       const npapiDLL = 'NPSWF32_32_0_0_371.dll';
@@ -211,7 +207,7 @@ export function installRuntime(
       const destination = distDir;
       return pify(fs.remove)(path.join(destination, 'runtime'))
       .then(() => {
-        return decompress(source, destination); // replace me
+        return decompress(source, destination); // TODO: replace me
       })
       .then(() => {
         return pify(fs.rename)(path.join(destination, 'basilisk'), path.join(destination, 'runtime'));
@@ -305,27 +301,7 @@ export function installRuntime(
   });
 }
 
-export function isRuntimeInstalled(
-  platform=process.platform,
-  legacy=process.platform === 'darwin' && semver.lt(os.release(), '14.0.0'),
-) {
+export function isRuntimeInstalled(platform, legacy) {
   const { distDir } = getPlatformDirectories(platform, legacy);
   return fs.existsSync(distDir);
-}
-
-if (import.meta.main) {
-  let exitCode = 0;
-  const runtimeSpinner = createSpinner('Installing runtime').start();
-  installRuntime()
-  .then(() => {
-    runtimeSpinner.success();
-  })
-  .catch(error => {
-    exitCode = 1;
-    runtimeSpinner.error();
-    console.error(error);
-  })
-  .finally(() => {
-    process.exit(exitCode);
-  });
 }

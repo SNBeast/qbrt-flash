@@ -14,14 +14,12 @@
   },
   "bin": "./bin/cli.js",
   "scripts": {
-    "postinstall": "node ./bin/postinstall.js",
     "start": "node ./bin/cli.js",
     "test": "eslint ."
   },
   "dependencies": {
     "7zip-min": "^3.0.1",
     "adm-zip": "^0.6.1",
-    "archiver": "^8.0.0",
     "command-line-args": "^6.0.2",
     "command-line-commands": "^4.0.1",
     "command-line-usage": "^7.0.4",

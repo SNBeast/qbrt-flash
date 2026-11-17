@@ -1,5 +1,4 @@
 {
   "name": "shell",
-  "main": "main.js",
-  "mainURL": "https://browserleaks.com/flash"
+  "main": "main.js"
 }

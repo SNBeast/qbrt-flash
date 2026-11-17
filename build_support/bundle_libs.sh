@@ -24,7 +24,7 @@ patch() {
             used_libs+=("$line")
         done < <(otool -L "$bin")
 
-	for lib in "${used_libs[@]:1}"; do
+        for lib in "${used_libs[@]:1}"; do
             lib=$(echo "${lib%%\(*}" | xargs)
 
             if ! echo "$lib" | grep -qF '@executable_path/'; then
