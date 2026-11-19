@@ -15,7 +15,6 @@
  * limitations under the License. */
 
 import AdmZip from 'adm-zip';
-import { createSpinner } from 'nanospinner';
 import commandLineArgs from 'command-line-args';
 import commandLineCommands from 'command-line-commands';
 import commandLineUsage from 'command-line-usage';
@@ -94,9 +93,6 @@ function packageApp() {
   if (options.legacy && (options.win || platform !== 'darwin')) {
     throw new Error('Creating a legacy package for non-macOS is not implemented.');
   }
-  if (options.legacy) {
-    throw new Error('Legacy macOS packages are currently dysfunctional due to bugs in all up-to-date browser options.');
-  }
   const { installDir } = getPlatformDirectories(platform, options.legacy);
 
   let appName;
@@ -114,8 +110,6 @@ function packageApp() {
   else {
     runtimeCheck = installRuntime(platform, options.legacy);
   }
-
-  let packagingSpinner = null;
 
   runtimeCheck.then(() => 
     readProjectMetadata(appSourceDir, function transformer(appPackageResult) {
@@ -137,10 +131,10 @@ function packageApp() {
     appVersion = appPackageJson.version;
     packageFile = `${appName}.` + (appVersion ? `v${appVersion}.` : '') + (options.legacy ? 'legacy.' : '') +
       { win32: 'zip', darwin: 'dmg'/*, linux: 'tgz'*/ }[platform];
-    packagingSpinner = createSpinner(`Packaging ${options.path} -> ${packageFile}`).start();
-    return appPackageJson;
+    console.log(`Packaging ${options.path} -> ${packageFile}...`);
+    return pify(fs.remove)(packageFile);
   })
-  .then(appPackageJson => {
+  .then(() => {
     return pify(fs.mkdtemp)(path.join(os.tmpdir(), `${appPackageJson.name}-`));
   })
   .then(tempDirArg => {
@@ -239,11 +233,11 @@ function packageApp() {
     }
   })
   .then(() => {
-    packagingSpinner.success();
+    console.log('Packaging succeeded!');
   })
   .catch((error) => {
-    if (packagingSpinner) packagingSpinner.error();
     console.error(error);
+    console.log('Packaging failed!');
   })
   .finally(() => {
     return fs.remove(stageDir);
