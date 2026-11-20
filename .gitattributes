@@ -1,2 +1,7 @@
 # Always use and retain Unix-style line endings, even on Windows.
 * text eol=lf
+
+*.7z binary
+*.zip binary
+*.exe binary
+*.dll binary
