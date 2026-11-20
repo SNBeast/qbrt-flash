@@ -88,50 +88,20 @@ CommandLineHandler.prototype = {
       }
     }
 
-    const aqqArg = cmdLine.handleFlagWithParam('aqq', false);
+    let webappDir = Services.dirsvc.get('CurProcD', Ci.nsIFile).parent;
+    webappDir.append('webapp');
+    let appJsonFile = webappDir.clone();
+    appJsonFile.append('app.json');
+    let appJson = JSON.parse(readFile(appJsonFile));
 
-    // Slurp arguments into an array we can pass to the app.
-    let commandLineArgs = [];
-    for (let i = 0; true; i++) {
-      try {
-        commandLineArgs.push(cmdLine.getArgument(i));
-      }
-      catch (ex) {
-        if (ex.result == Cr.NS_ERROR_INVALID_ARG) {
-          break;
-        }
-        else {
-          throw ex;
-        }
-      }
-    }
-
-    let aqqPath, packageJSON = {};
-
-    if (aqqArg) {
-      aqqPath = cmdLine.resolveFile(aqqArg);
-      if (!aqqPath.exists()) {
-        dump(`error: nonexistent path: ${aqqPath.path}\n`);
-        return;
-      }
-      // TODO: retrieve package.json data from path.
-    }
-    else {
-      let webappDir = Services.dirsvc.get('CurProcD', Ci.nsIFile).parent;
-      webappDir.append('webapp');
-      let packageJsonFile = webappDir.clone();
-      packageJsonFile.append('package.json');
-      packageJSON = JSON.parse(readFile(packageJsonFile));
-
-      let webappDirURI = Services.io.newFileURI(webappDir);
-      let mainFileURI = Services.io.newURI(packageJSON.main || 'index.js', null, webappDirURI);
-      mainFileURI.QueryInterface(Ci.nsIFileURL);
-      let mainFile = mainFileURI.file;
-      aqqPath = mainFile;
-    }
+    let webappDirURI = Services.io.newFileURI(webappDir);
+    let mainFileURI = Services.io.newURI('main.js', null, webappDirURI);
+    mainFileURI.QueryInterface(Ci.nsIFileURL);
+    let mainFile = mainFileURI.file;
+    let aqqPath = mainFile;
 
     try {
-      Runtime.start(aqqPath, commandLineArgs, packageJSON);
+      Runtime.start(aqqPath, appJson);
     }
     catch (ex) {
       dump(`error starting runtime: ${ex}\n`);

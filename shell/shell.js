@@ -17,11 +17,11 @@
 const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
 const { Runtime } = Cu.import('resource://qbrt/modules/Runtime.jsm', {});
 const { Services } = Cu.import('resource://gre/modules/Services.jsm', {});
+const { XPCOMUtils } = Cu.import('resource://gre/modules/XPCOMUtils.jsm', {});
 
 const Accelerators = {
   isMac: Services.appinfo.OS === 'Darwin',
   keys: {
-    i: 73,
     r: 82,
     f5: 116,
   },
@@ -55,15 +55,24 @@ const Accelerators = {
       event.keyCode === this.keys.r;
     return ctrlShiftR;
   },
-  ToggleDevTools: function(event) {
-    if (this.isMac) {
-      // `Cmd + Alt + I`.
-      const cmdAltI = event.metaKey && event.altKey && event.keyCode === this.keys.i;
-      return cmdAltI;
+};
+
+const navigationInterceptor = {
+  QueryInterface: XPCOMUtils.generateQI(['nsIWebProgressListener', 'nsISupportsWeakReference']),
+  onStateChange: function(aWebProgress, aRequest, aFlag, _) {
+    if ((aFlag & Ci.nsIWebProgressListener.STATE_START) && (aFlag & Ci.nsIWebProgressListener.STATE_IS_REQUEST)) {
+      if (aWebProgress && aWebProgress.isTopLevel
+        && aRequest && aRequest instanceof Ci.nsIChannel
+        && (aRequest.loadFlags & Ci.nsIChannel.LOAD_DOCUMENT_URI)) {
+        if (!(new RegExp(Runtime.appJson.appUrlPattern)).test(aRequest.URI.spec)) {
+          aRequest.cancel(Cr.NS_BINDING_ABORTED);
+
+          Cc['@mozilla.org/uriloader/external-protocol-service;1']
+          .getService(Ci.nsIExternalProtocolService)
+          .loadURI(aRequest.URI, UI.browser.docShell);
+        }
+      }
     }
-    // `Ctrl + Shift + I`.
-    const ctrlShiftI = event.ctrlKey && event.shiftKey && event.keyCode === this.keys.i;
-    return ctrlShiftI;
   },
 };
 
@@ -97,16 +106,14 @@ Shortcuts.prototype.handleEvent = function(event) {
 const UI = {
   init: () => {
     const browser = UI.browser = document.getElementById('content');
-    const url = UI.url = window.arguments[0];
+    const url = UI.url = Runtime.appJson.appUrlStart;
     const shortcuts = UI.shortcuts = new Shortcuts();
 
     // Focus the browser window when the application is opened.
     browser.focus();
 
     browser.loadURI(url, null, null);
-
-    // Dump instead of log to write to stdout for tests.
-    dump(`opened ${url} in new window\n`);
+    document.title = Runtime.appJson.longName;
 
     // Hard-reload the web page.
     // Windows/Linux: `Shift + F5` or `Ctrl + Shift + R`.
@@ -125,33 +132,13 @@ const UI = {
       browser.reload();
     });
 
-    // Toggle the DevTools.
-    // Windows/Linux: `Ctrl + Shift + I`.
-    // Mac:           `Cmd + Shift + I`.
-    shortcuts.register('ToggleDevTools', () => {
-      const toolsWindow = Runtime.toggleDevTools(browser);
-      if (toolsWindow) {
-        // DevTools window was created for the first time.
-        toolsWindow.addEventListener('keydown', onToolsKeydown);
-        toolsWindow.addEventListener('unload', onToolsUnload, { once: true });
-      }
-    });
-    const onToolsKeydown = event => {
-      // NB: the DevTools window handles its own reload key events,
-      // so we don't need to handle them ourselves.
-      if (shortcuts.testEvent(event, 'ToggleDevTools')) {
-        Runtime.toggleDevTools(browser);
-      }
-    };
-    const onToolsUnload = event => {
-      const toolsWindow = event.target;
-      toolsWindow.removeEventListener('keydown', onToolsKeydown);
-    };
-
     // Handle browser-level keyboard shortcuts.
     browser.addEventListener('keydown', event => {
       shortcuts.handleEvent(event);
     }, false, true);
+
+    // despite disregarding non-request events, changing this to NOTIFY_STATE_REQUEST breaks it
+    browser.webProgress.addProgressListener(navigationInterceptor, Ci.nsIWebProgress.NOTIFY_STATE_ALL);
   },
 
   destroy: () => {

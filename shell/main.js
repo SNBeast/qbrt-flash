@@ -15,7 +15,6 @@
 'use strict';
 
 const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
-const { Runtime } = Cu.import('resource://qbrt/modules/Runtime.jsm', {});
 const { Services } = Cu.import('resource://gre/modules/Services.jsm', {});
 
 const SHELL_URL = 'chrome://app/content/shell.xul';
@@ -27,15 +26,5 @@ const WINDOW_FEATURES = [
   'scrollbars',
 ].join(',');
 
-// On startup, activate ourselves, since starting up from Node doesn't do this.
-// TODO: do this by default for all apps started via Node.
-if (Services.appinfo.OS === 'Darwin') {
-  Cc['@mozilla.org/widget/macdocksupport;1'].getService(Ci.nsIMacDockSupport).activateApplication(true);
-}
-
-const url = Runtime.packageJSON.mainURL;
-const argument = Cc['@mozilla.org/supports-string;1'].createInstance(Ci.nsISupportsString);
-argument.data = url;
-
 // TODO: report error if URL isn't found.
-Services.ww.openWindow(null, SHELL_URL, '_blank', WINDOW_FEATURES, argument);
+Services.ww.openWindow(null, SHELL_URL, '_blank', WINDOW_FEATURES, null);

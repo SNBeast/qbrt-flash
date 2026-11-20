@@ -15,127 +15,73 @@
  * limitations under the License. */
 
 import AdmZip from 'adm-zip';
-import commandLineArgs from 'command-line-args';
-import commandLineCommands from 'command-line-commands';
-import commandLineUsage from 'command-line-usage';
 import fs from 'fs-extra';
 import { getPlatformDirectories } from './directory-utils.js';
 import { isRuntimeInstalled, installRuntime } from './install-runtime.js';
 import klaw from 'klaw';
 import os from 'os';
-import normalizePackageData from 'normalize-package-data';
-import packageJson from '../package.json' with { type: 'json' };
 import path from 'path';
+import * as PELibrary from 'pe-library';
 import pify from 'pify';
 import plist from 'simple-plist';
-import { readPackageUp } from 'read-package-up';
+import { readFile } from 'fs/promises';
+import * as ResEdit from 'resedit';
 import semver from 'semver';
 import { spawn } from 'child_process';
 
-const validCommands = [ null, 'package', 'run', 'version', 'help', 'update' ];
-let parsedCommands = {};
+export default function packageApp(packageDir, platform) {
+  let legacy = false;
 
-try {
-  parsedCommands = commandLineCommands(validCommands);
-}
-catch (error) {
-  if (error.name === 'INVALID_COMMAND') {
-    displayHelp();
-    process.exit(1);
+  if (platform === 'darwinLegacy') {
+    platform = 'darwin';
+    legacy = true;
   }
-  else {
-    throw error;
+
+  if (platform === 'darwin' && process.platform !== 'darwin') {
+    throw new Error('macOS packages can only be created on macOS.');
   }
-}
 
-const command = parsedCommands.command;
-const argv = parsedCommands.argv;
-
-switch (command) {
-  case 'package':
-    packageApp();
-    break;
-  case 'help':
-    displayHelp();
-    break;
-  default:
-    if (argv.includes('-v') ||
-        argv.includes('--v') ||
-        argv.includes('--version')) {
-      displayVersion();
-      break;
-    }
-    displayHelp();
-    break;
-}
-
-function packageApp() {
-  const optionDefinitions = [
-    { name: 'path', alias: 'p', type: String, defaultOption: true, defaultValue: argv[0] || process.cwd() },
-    { name: 'win', type: Boolean },
-    { name: 'legacy', type: Boolean },
-    // { name: 'linux', type: Boolean },
-  ];
-  const options = commandLineArgs(optionDefinitions, { argv: argv });
-  const shellDir = path.join(import.meta.dirname, '..', 'shell');
-  const appSourceDir = fs.existsSync(options.path) ? path.resolve(options.path) : shellDir;;
-
-  let platform = process.platform;
-  /*if (options.win && options.linux) {
-    throw new Error('Cannot package windows and linux packages simultaneously.');
-  }*/
-  if (options.win) {
-    platform = 'win32';
+  if (!['win32', 'darwin'].includes(platform)) {
+    throw new Error('Only "win32", "darwin", and "darwinLegacy" packages can be created.');
   }
-  /*if (options.linux) {
-    platform = 'linux';
-  }*/
-  if (options.legacy && (options.win || platform !== 'darwin')) {
-    throw new Error('Creating a legacy package for non-macOS is not implemented.');
-  }
-  const { installDir } = getPlatformDirectories(platform, options.legacy);
+
+  const { buildDir, installDir } = getPlatformDirectories(platform, legacy);
 
   let appName;
-  let appPackageJson;
+  let appJson;
   let appTargetDir;
   let appVersion;
+  let appAuthor;
   let packageFile;
   let tempDir;
   let stageDir;
 
   let runtimeCheck;
-  if (isRuntimeInstalled(platform, options.legacy)) {
+  if (isRuntimeInstalled(platform, legacy)) {
     runtimeCheck = Promise.resolve();
   }
   else {
-    runtimeCheck = installRuntime(platform, options.legacy);
+    runtimeCheck = installRuntime(platform, legacy);
   }
 
-  runtimeCheck.then(() => 
-    readProjectMetadata(appSourceDir, function transformer(appPackageResult) {
-      // `productName` is a key commonly used in `package.json` files of Electron apps.
-      appPackageResult.packageJson.name = appPackageResult.packageJson.productName ||
-        appPackageResult.packageJson.name || path.basename(appSourceDir);
-      return appPackageResult;
-    }),
-  )
-  .then(appPackageResult => {
-    return appPackageResult;
-  }, error => {
-    console.error(error);
-    process.exit(1);
+  runtimeCheck.then(() => {
+    return readFile(path.join(packageDir, 'app.json'))
+    .then(data => {
+      return JSON.parse(data);
+    });
   })
-  .then(appPackageResult => {
-    appPackageJson = appPackageResult.packageJson;
-    appName = appPackageJson.name;
-    appVersion = appPackageJson.version;
-    packageFile = `${appName}.` + (appVersion ? `v${appVersion}.` : '') + (options.legacy ? 'legacy.' : '') +
+  .then(appJsonResult => {
+    appJson = appJsonResult;
+    appName = appJson.name;
+    appVersion = appJson.version;
+    appAuthor = appJson.author.name;
+    packageFile = `${appName}.` + (appVersion ? `v${appVersion}.` : '') + (legacy ? 'legacy.' : '') +
       { win32: 'zip', darwin: 'dmg'/*, linux: 'tgz'*/ }[platform];
-    console.log(`Packaging ${options.path} -> ${packageFile}...`);
+    console.log(`Packaging ${appName} -> ${packageFile}...`);
     return pify(fs.remove)(packageFile);
   })
   .then(() => {
-    return pify(fs.mkdtemp)(path.join(os.tmpdir(), `${appPackageJson.name}-`));
+    return pify(fs.mkdtemp)(path.join(os.tmpdir(), `${appName}-`));
   })
   .then(tempDirArg => {
     tempDir = tempDirArg;
@@ -150,32 +96,78 @@ function packageApp() {
     return pify(fs.copy)(installDir, stageDir);
   })
   .then(() => {
-    // Rename launcher script to the app's name.
-    const exeDir = platform === 'darwin' ? path.join(stageDir, 'Contents', 'MacOS') : stageDir;
-    const source = path.join(exeDir, platform === 'win32' ? 'launcher.bat' : 'launcher.sh');
-    const target = path.join(exeDir, platform === 'win32' ? `${appName}.bat` : appName);
-    return pify(fs.move)(source, target);
+    if (platform === 'win32') {
+      // Copy shim launcher which is set to the app's name.
+      const source = path.join(buildDir, 'shim.exe');
+      const dest = path.join(stageDir, `${appName}.exe`);
+      return pify(fs.copy)(source, dest);
+    }
+    else {
+      // Rename executable to the app's name.
+      const exeDir = platform === 'darwin' ? path.join(stageDir, 'Contents', 'MacOS') : stageDir;
+      const source = path.join(exeDir, 'launcher.sh');
+      const target = path.join(exeDir, appName);
+      return pify(fs.move)(source, target);
+    }
   })
   .then(() => {
-    // Update the Info.plist file with the new name of the launcher script.
+    const resDir = platform === 'darwin' ? path.join(stageDir, 'Contents', 'Resources') : stageDir;
+    const iniFile = path.join(resDir, 'qbrt', 'application.ini');
+    return fs.readFile(iniFile)
+    .then((contents) => {
+      return fs.writeFile(
+        iniFile,
+        Buffer.from(contents.toString('utf-8').replace('Name=qbrt-flash', `Name=${appName}`), 'utf-8'),
+      );
+    });
+  })
+  .then(() => {
     if (platform === 'darwin') {
-      const plistFile = path.join(stageDir, 'Contents', 'Info.plist');
+      const contentsDir = path.join(stageDir, 'Contents');
+      const resourcesDir = path.join(contentsDir, 'Resources');
+      const plistFile = path.join(contentsDir, 'Info.plist');
       return pify(plist.readFile)(plistFile)
       .then(appPlist => {
         appPlist.CFBundleExecutable = appName;
-        return pify(plist.writeFile)(plistFile, appPlist);
+        appPlist.CFBundleName = appName;
+        appPlist.CFBundleGetInfoString = `${appName} ${appVersion}`;
+        appPlist.CFBundleIdentifier = appJson.identifier
+          ?? `com.qbrt-flash.${appAuthor}.${appName}`.toLowerCase();
+        appPlist.LSApplicationCategoryType = 'public.app-category.games';
+        delete appPlist.CFBundleDocumentTypes;
+        delete appPlist.CFBundleURLTypes;
+        return pify(plist.writeFile)(plistFile, appPlist)
+        .then(() => {
+          return pify(fs.copy)(
+            path.join(packageDir, 'mac_icon.icns'),
+            path.join(resourcesDir, appPlist.CFBundleIconFile),
+            { overwrite: true },
+          );
+        })
+        .then(() => {
+          // this is so far the only translation folder they have, and it just sets the bundle name
+          return fs.remove(path.join(resourcesDir, 'en.lproj'));
+        });
+      });
+    }
+    else if (platform === 'win32') {
+      const icoPath = path.join(packageDir, 'win_icon.ico');
+      return editIcon(path.join(stageDir, `${appName}.exe`), icoPath, appJson)
+      .then(() => {
+        return editIcon(path.join(stageDir, 'platform.exe'), icoPath, appJson);
       });
     }
   })
   .then(() => {
     // Copy the app to the stage directory.
-    return pify(fs.copy)(appSourceDir, appTargetDir)
+    const defaultShell = path.join(import.meta.dirname, '..', 'shell');
+    const customShell = path.join(packageDir, 'shell');
+    return fs.exists(customShell)
+    .then((result) => {
+      pify(fs.copy)(result ? customShell : defaultShell, appTargetDir);
+    })
     .then(() => {
-      if (appSourceDir === shellDir) {
-        const appTargetPackageJSONFile = path.join(appTargetDir, 'package.json');
-        appPackageJson.mainURL = options.path;
-        return pify(fs.writeFile)(appTargetPackageJSONFile, JSON.stringify(appPackageJson));
-      }
+      return pify(fs.copy)(path.join(packageDir, 'app.json'), path.join(appTargetDir, 'app.json'), { overwrite: true });
     });
   })
   .then(() => {
@@ -244,89 +236,45 @@ function packageApp() {
   });
 }
 
-function displayVersion() {
-  console.log(packageJson.version);
-}
-
-function displayHelp() {
-  const sections = [
-    {
-      header: 'qbrt-flash',
-      content: 'qbrt-flash is a command-line interface to a Gecko desktop app runtime. ' +
-               'It\'s designed to simplify the process of building and testing desktop apps using Gecko.',
-    },
-    {
-      header: 'Synopsis',
-      content: '$ qbrt-flash <command> <path or URL>',
-    },
-    {
-      header: 'Command List',
-      content: [
-        { name: 'package', summary: 'Package an app for distribution.' },
-      ],
-    },
-    {
-      header: 'Examples',
-      content: [
+function editIcon(exePath, icoPath, appJson) {
+  return fs.readFile(exePath)
+  .then((data) => {
+    const exe = PELibrary.NtExecutable.from(data, { ignoreCert: true });
+    const res = PELibrary.NtExecutableResource.from(exe);
+    return fs.readFile(icoPath)
+    .then(ico => {
+      const icon = ResEdit.Data.IconFile.from(ico);
+      const iconGroups = ResEdit.Resource.IconGroupEntry.fromEntries(res.entries);
+      if (!iconGroups.length) {
+        ResEdit.Resource.IconGroupEntry.replaceIconsForResource(
+          res.entries,
+          1,
+          0,
+          icon.icons.map(item => item.data),
+        );
+      }
+      else {
+        ResEdit.Resource.IconGroupEntry.fromEntries(res.entries).map(entry => {
+          ResEdit.Resource.IconGroupEntry.replaceIconsForResource(
+            res.entries,
+            entry.id,
+            0,
+            icon.icons.map(item => item.data),
+          );
+        });
+      }
+      const version = ResEdit.Resource.VersionInfo.fromEntries(res.entries)[0] ?? new ResEdit.Resource.VersionInfo;
+      version.setStringValues(
+        { lang: 0, codepage: 1200 },
         {
-          desc: '1. Package an app for distribution.',
-          example: '$ qbrt-flash package path/to/my/app/',
+          FileDescription: appJson.name,
+          ProductName: appJson.name,
+          ProductVersion: appJson.version,
         },
-      ],
-    },
-    {
-      content: `Project home: {underline ${packageJson.homepage}}`,
-    },
-  ];
-
-  const usage = commandLineUsage(sections);
-  console.log(usage);
-}
-
-function readProjectMetadata(projectDir, transformer) {
-  function transform(result) {
-    if (typeof transformer === 'function') {
-      result = transformer(result);
-    }
-    return result;
-  }
-
-  function removeUnused(metadata) {
-    // Remove unneeded keys that were added by `normalize-package-data`.
-    delete metadata._id;
-    if (metadata.readme === 'ERROR: No README data found!') {
-      delete metadata.readme;
-    }
-    return metadata;
-  }
-
-  return readPackageUp({cwd: projectDir}).then(result => {
-    // If the app doesn't have a package.json file, then result.packageJson
-    // will be undefined, but we assume it's defined in other parts of the
-    // codebase, so ensure that it's defined, even if it's just an empty object.
-    result.packageJson = result.packageJson || {};
-
-    // If the app doesn't have a package.json file, then result.path will be
-    // undefined, but we assume it's defined in other parts of the codebase,
-    // so ensure that it's defined, even if the file doesn't actually exist.
-    result.path = result.path || path.join(projectDir, 'package.json');
-
-    let metadata = result.packageJson;
-
-    result = transform(result);
-
-    // `normalizePackageData` will throw if there are any errors
-    // (e.g., invalid values for `name` or `version`) in the
-    // `package.json` file.
-    // To expose warnings, pass a callback as a second argument.
-    normalizePackageData(metadata);
-
-    result.packageJson = removeUnused(metadata);
-
-    return result;
-  })
-  .catch(error => {
-    console.error(error);
-    process.exit(1);
+      );
+      version.outputToResourceEntries(res.entries);
+      res.outputResource(exe);
+      fs.writeFile(exePath, Buffer.from(exe.generate()));
+    });
   });
 }

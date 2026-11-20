@@ -19,9 +19,7 @@ import AdmZip from 'adm-zip';
 import fs from 'fs-extra';
 import { getPlatformDirectories } from './directory-utils.js';
 import https from 'https';
-import { installXULApp } from './install-xulapp.js';
 import os from 'os';
-import packageJson from '../package.json' with { type: 'json' };
 import path from 'path';
 import pify from 'pify';
 import plist from 'simple-plist';
@@ -70,15 +68,14 @@ function downloadFile(link, out) {
 export function installRuntime(platform, legacy) {
   let tempDir, mountPoint, filePath;
 
-  const { buildDir, distDir, installDir, resourcesDir, executableDir } = getPlatformDirectories(platform, legacy);
-  const browserJAR = path.join(resourcesDir, 'browser', 'omni.ja');
+  const { buildDir, distDir, executableDir, installDir, resourcesDir } = getPlatformDirectories(platform, legacy);
 
   return Promise.resolve()
   .then(() => {
     return pify(fs.ensureDir)(distDir);
   })
   .then(() => {
-    return pify(fs.mkdtemp)(path.join(os.tmpdir(), `${packageJson.name}-`));
+    return pify(fs.mkdtemp)(path.join(os.tmpdir(), 'qbrt-flash-'));
   })
   .then(tempDirArg => {
     tempDir = tempDirArg;
@@ -167,7 +164,7 @@ export function installRuntime(platform, legacy) {
             }
           })
           .then(() => {
-            const source = path.join(mountPoint, 'payload/i386');
+            const source = path.join(mountPoint, 'payload', 'i386');
             const destination = path.join(executableDir, 'plugins');
 
             return pify(fs.copy)(source, destination);
@@ -212,36 +209,10 @@ export function installRuntime(platform, legacy) {
     }*/
   })
   .then(() => {
-    return installXULApp(platform, legacy);
-  })
-  .then(() => {
-    // Expand the browser xulapp's JAR archive so we can access its devtools.
-    // We have to expand it into a subdirectory of qbrt's xulapp directory,
-    // because chrome manifests can't reference super-directories.
+    const sourceDir = path.join(import.meta.dirname, '..', 'qbrt');
+    const targetDir = path.join(resourcesDir, 'qbrt');
 
-    // TODO: limit expansion to browser files that are necessary for devtools.
-
-    const targetDir = path.join(resourcesDir, 'qbrt', 'browser');
-    return new AdmZip(browserJAR).extractAllToAsync(targetDir, true);
-  })
-  .then(() => {
-    // Copy devtools pref files from browser to qbrt.
-
-    const sourceDir = path.join(resourcesDir, 'qbrt', 'browser', 'defaults', 'preferences');
-    const targetDir = path.join(resourcesDir, 'qbrt', 'defaults', 'preferences');
-
-    const prefFiles = [
-      'debugger.js',
-      'devtools-client.js',
-      'devtools-startup.js',
-      'devtools.js',
-    ];
-
-    return Promise.all(prefFiles.map(file => {
-      if (fs.pathExistsSync(path.join(sourceDir, file))) {
-        pify(fs.copy)(path.join(sourceDir, file), path.join(targetDir, file));
-      }
-    }));
+    return pify(fs.copy)(sourceDir, targetDir);
   })
   .then(() => {
     // Copy and configure the stub executable.
@@ -252,7 +223,11 @@ export function installRuntime(platform, legacy) {
         return pify(fs.copy)(
           path.join(import.meta.dirname, '..', 'launcher.bat'),
           path.join(executableDir, 'launcher.bat'),
-        );
+        )
+        .then(() => {
+          // use a name for the "real" browser exe which conveys being non-primary
+          return fs.rename(path.join(executableDir, 'basilisk.exe'), path.join(executableDir, 'platform.exe'));
+        });
       }
       case 'darwin': {
         return pify(fs.copy)(

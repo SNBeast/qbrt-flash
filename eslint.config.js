@@ -103,9 +103,4 @@ export default defineConfig([{
 
   // Ignore the dist/ directory into which we install the runtime package.
   'dist/**/*',
-
-  // Ignore files that we copied from Firefox and want to preserve maximally
-  // for ease of updating (until we can get rid of them entirely).
-  'defaults/preferences/debugger.js',
-  'defaults/preferences/devtools.js',
 ])]);
