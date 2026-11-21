@@ -79,7 +79,7 @@ export default function packageApp(packageDir, platform) {
     appJson = appJsonResult;
     appName = appJson.name;
     appVersion = appJson.version;
-    appAuthor = appJson.author.name;
+    appAuthor = appJson.author?.name;
     packageFile = `${appName}.` + (appVersion ? `v${appVersion}.` : '') + (legacy ? 'legacy.' : '') +
       { win32: 'zip', darwin: 'dmg'/*, linux: 'tgz'*/ }[platform];
     console.log(`Packaging ${appName} -> ${packageFile}...`);
