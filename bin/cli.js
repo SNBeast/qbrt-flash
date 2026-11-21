@@ -68,6 +68,11 @@ export default function packageApp(packageDir, platform) {
     return readFile(path.join(packageDir, 'app.json'))
     .then(data => {
       return JSON.parse(data);
+    })
+    .catch((error) => {
+      console.error(error);
+      console.log('Packaging failed!');
+      throw error;
     });
   })
   .then(appJsonResult => {
@@ -78,10 +83,19 @@ export default function packageApp(packageDir, platform) {
     packageFile = `${appName}.` + (appVersion ? `v${appVersion}.` : '') + (legacy ? 'legacy.' : '') +
       { win32: 'zip', darwin: 'dmg'/*, linux: 'tgz'*/ }[platform];
     console.log(`Packaging ${appName} -> ${packageFile}...`);
-    return pify(fs.remove)(packageFile);
+    return pify(fs.remove)(packageFile)
+    .catch((error) => {
+      console.error(error);
+      console.log('Packaging failed!');
+    });
   })
   .then(() => {
-    return pify(fs.mkdtemp)(path.join(os.tmpdir(), `${appName}-`));
+    return pify(fs.mkdtemp)(path.join(os.tmpdir(), `${appName}-`))
+    .catch((error) => {
+      console.error(error);
+      console.log('Packaging failed!');
+      throw error;
+    });
   })
   .then(tempDirArg => {
     tempDir = tempDirArg;
@@ -90,24 +104,38 @@ export default function packageApp(packageDir, platform) {
     appTargetDir = platform === 'darwin' ?
       path.join(stageDir, 'Contents', 'Resources', 'webapp') :
       path.join(stageDir, 'webapp');
-  })
-  .then(() => {
+
     // Copy the runtime to the staging dir.
-    return pify(fs.copy)(installDir, stageDir);
+    return pify(fs.copy)(installDir, stageDir)
+    .catch((error) => {
+      console.error(error);
+      console.log('Packaging failed!');
+      throw error;
+    });
   })
   .then(() => {
     if (platform === 'win32') {
       // Copy shim launcher which is set to the app's name.
       const source = path.join(buildDir, 'shim.exe');
       const dest = path.join(stageDir, `${appName}.exe`);
-      return pify(fs.copy)(source, dest);
+      return pify(fs.copy)(source, dest)
+      .catch((error) => {
+        console.error(error);
+        console.log('Packaging failed!');
+        throw error;
+      });
     }
     else {
       // Rename executable to the app's name.
       const exeDir = platform === 'darwin' ? path.join(stageDir, 'Contents', 'MacOS') : stageDir;
       const source = path.join(exeDir, 'launcher.sh');
       const target = path.join(exeDir, appName);
-      return pify(fs.move)(source, target);
+      return pify(fs.move)(source, target)
+      .catch((error) => {
+        console.error(error);
+        console.log('Packaging failed!');
+        throw error;
+      });
     }
   })
   .then(() => {
@@ -118,7 +146,17 @@ export default function packageApp(packageDir, platform) {
       return fs.writeFile(
         iniFile,
         Buffer.from(contents.toString('utf-8').replace('Name=qbrt-flash', `Name=${appName}`), 'utf-8'),
-      );
+      )
+      .catch((error) => {
+        console.error(error);
+        console.log('Packaging failed!');
+        throw error;
+      });
+    })
+    .catch((error) => {
+      console.error(error);
+      console.log('Packaging failed!');
+      throw error;
     });
   })
   .then(() => {
@@ -142,11 +180,26 @@ export default function packageApp(packageDir, platform) {
             path.join(packageDir, 'mac_icon.icns'),
             path.join(resourcesDir, appPlist.CFBundleIconFile),
             { overwrite: true },
-          );
+          )
+          .catch((error) => {
+            console.error(error);
+            console.log('Packaging failed!');
+            throw error;
+          });
         })
         .then(() => {
           // this is so far the only translation folder they have, and it just sets the bundle name
-          return fs.remove(path.join(resourcesDir, 'en.lproj'));
+          return fs.remove(path.join(resourcesDir, 'en.lproj'))
+          .catch((error) => {
+            console.error(error);
+            console.log('Packaging failed!');
+            throw error;
+          });
+        })
+        .catch((error) => {
+          console.error(error);
+          console.log('Packaging failed!');
+          throw error;
         });
       });
     }
@@ -154,7 +207,17 @@ export default function packageApp(packageDir, platform) {
       const icoPath = path.join(packageDir, 'win_icon.ico');
       return editIcon(path.join(stageDir, `${appName}.exe`), icoPath, appJson)
       .then(() => {
-        return editIcon(path.join(stageDir, 'platform.exe'), icoPath, appJson);
+        return editIcon(path.join(stageDir, 'platform.exe'), icoPath, appJson)
+        .catch((error) => {
+          console.error(error);
+          console.log('Packaging failed!');
+          throw error;
+        });
+      })
+      .catch((error) => {
+        console.error(error);
+        console.log('Packaging failed!');
+        throw error;
       });
     }
   })
@@ -164,10 +227,25 @@ export default function packageApp(packageDir, platform) {
     const customShell = path.join(packageDir, 'shell');
     return fs.exists(customShell)
     .then((result) => {
-      pify(fs.copy)(result ? customShell : defaultShell, appTargetDir);
+      return pify(fs.copy)(result ? customShell : defaultShell, appTargetDir, { overwrite: true })
+      .catch((error) => {
+        console.error(error);
+        console.log('Packaging failed!');
+        throw error;
+      });
     })
     .then(() => {
-      return pify(fs.copy)(path.join(packageDir, 'app.json'), path.join(appTargetDir, 'app.json'), { overwrite: true });
+      return pify(fs.copy)(path.join(packageDir, 'app.json'), path.join(appTargetDir, 'app.json'), { overwrite: true })
+      .catch((error) => {
+        console.error(error);
+        console.log('Packaging failed!');
+        throw error;
+      });
+    })
+    .catch((error) => {
+      console.error(error);
+      console.log('Packaging failed!');
+      throw error;
     });
   })
   .then(() => {
@@ -202,7 +280,17 @@ export default function packageApp(packageDir, platform) {
           const child = spawn('hdiutil', hdiutilArgs, { stdio: 'inherit' });
           child.on('exit', resolve);
           // TODO: handle errors returned by hdiutil.
+        })
+        .catch((error) => {
+          console.error(error);
+          console.log('Packaging failed!');
+          throw error;
         });
+      })
+      .catch((error) => {
+        console.error(error);
+        console.log('Packaging failed!');
+        throw error;
       });
     }
     /*else if (platform === 'linux') {
@@ -220,7 +308,17 @@ export default function packageApp(packageDir, platform) {
       let zipFile = new AdmZip();
       return zipFile.addLocalFolderPromise(stageDir, { zipPath: path.basename(stageDir) })
       .then(() => {
-        return zipFile.writeZipPromise(packageFile, { overwrite: true });
+        return zipFile.writeZipPromise(packageFile, { overwrite: true })
+        .catch((error) => {
+          console.error(error);
+          console.log('Packaging failed!');
+          throw error;
+        });
+      })
+      .catch((error) => {
+        console.error(error);
+        console.log('Packaging failed!');
+        throw error;
       });
     }
   })
@@ -232,7 +330,12 @@ export default function packageApp(packageDir, platform) {
     console.log('Packaging failed!');
   })
   .finally(() => {
-    return fs.remove(stageDir);
+    return fs.remove(stageDir)
+    .catch((error) => {
+      console.error(error);
+      console.log('Packaging failed!');
+      throw error;
+    });
   });
 }
 
@@ -275,6 +378,16 @@ function editIcon(exePath, icoPath, appJson) {
       version.outputToResourceEntries(res.entries);
       res.outputResource(exe);
       fs.writeFile(exePath, Buffer.from(exe.generate()));
+    })
+    .catch((error) => {
+      console.error(error);
+      console.log('Packaging failed!');
+      throw error;
     });
+  })
+  .catch((error) => {
+    console.error(error);
+    console.log('Packaging failed!');
+    throw error;
   });
 }
