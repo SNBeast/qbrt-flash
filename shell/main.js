@@ -15,16 +15,22 @@
 'use strict';
 
 const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
+const { Runtime } = Cu.import('resource://qbrt/modules/Runtime.jsm', {});
 const { Services } = Cu.import('resource://gre/modules/Services.jsm', {});
 
 const SHELL_URL = 'chrome://app/content/shell.xul';
 
-const WINDOW_FEATURES = [
-  'width=640',
-  'height=480',
-  'resizable',
-  'scrollbars',
-].join(',');
+const WINDOW_FEATURES = (() => {
+  let features = [
+    `width=${Runtime.appJson.startWidth}`,
+    `height=${Runtime.appJson.startHeight}`,
+  ];
+  if (Runtime.appJson.resizable) {
+    features.push('resizable');
+    features.push('scrollbars');
+  }
+  return features.join(',');
+})();
 
 // TODO: report error if URL isn't found.
 Services.ww.openWindow(null, SHELL_URL, '_blank', WINDOW_FEATURES, null);
