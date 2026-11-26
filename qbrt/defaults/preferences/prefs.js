@@ -14,18 +14,20 @@
 
 // App-specific preferences, in alphabetical order.
 
+pref('app.update.enabled', false);
+// out of date plugins are probably being used for a reason
+pref('extensions.blocklist.enabled', false);
+pref('extensions.update.enabled', false);
+// disable Windows registry plugin search, which takes precedence over bundled plugins
+pref('plugin.scan.plid.all', false);
+// start plugins without interaction
+pref('plugin.default.state', 2);
+// allow bundling plugins with the runtime
+pref('plugins.load_appdir_plugins', true);
+
 // Ideally, this would disable telemetry, but it doesn't actually work
 // (at least it doesn't disable code that spews errors into the console),
 // so we also override the @mozilla.org/base/telemetry-startup;1 XPCOM contract
 // with a custom component DisabledTelemetryStartup that ignores
 // the app-startup and profile-after-change messages.
 pref('toolkit.telemetry.enabled', false);
-
-// allow bundling plugins with the runtime
-pref('plugins.load_appdir_plugins', true);
-// disable global plugin search
-pref('plugin.scan.plid.all', false);
-// start plugins without interaction
-pref('plugin.default.state', 2);
-// disable blocking outdated plugins, as they were likely chosen for a reason
-pref('extensions.blocklist.enabled', false);
