@@ -1,1 +1,1 @@
-i686-w64-mingw32-gcc shim.c -o ../shim.exe -nostdlib -lkernel32 -e _WinMainCRTStartup -march=i386 -Oz -s -Wl,--subsystem,windows
+i686-w64-mingw32-gcc shim.c -o shim.exe -nostdlib -lkernel32 -e _WinMainCRTStartup -march=i386 -Oz -s -Wl,--subsystem,windows
