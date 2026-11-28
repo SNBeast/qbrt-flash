@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # http://stackoverflow.com/questions/29832037/how-to-get-script-directory-in-posix-sh
 rreadlink() ( # Execute the function in a *subshell* to localize variables and the effect of `cd`.
@@ -47,7 +47,7 @@ rreadlink() ( # Execute the function in a *subshell* to localize variables and t
 )
 
 MOZ_APP_NAME=basilisk
-MOZ_LIBDIR=$(dirname -- "$(rreadlink "$0")")
+MOZ_LIBDIR=$(command dirname -- "$(rreadlink "$0")")
 MOZ_RESOURCES_DIR=''
 
-exec -a "${MOZ_LIBDIR}/${MOZ_APP_NAME}" "${MOZ_LIBDIR}/${MOZ_APP_NAME}" --app "${MOZ_LIBDIR}/${MOZ_RESOURCES_DIR}qbrt/application.ini" "$@"
+exec "${MOZ_LIBDIR}/${MOZ_APP_NAME}" --app "${MOZ_LIBDIR}/${MOZ_RESOURCES_DIR}qbrt/application.ini" "$@"
